@@ -36,6 +36,8 @@ const WorldMap: React.FC = () => {
   const projectionRef = useRef<d3.GeoProjection | null>(null);
   // Store D3 color scale in a ref
   const depthColorScaleRef = useRef<d3.ScaleSequential<string, never> | null>(null);
+  // Store D3 radius scale (power scale) in a ref
+  const magnitudeRadiusScaleRef = useRef<d3.ScalePower<number, number, never> | null>(null);
 
   // State for GeoJSON world map data
   const [geoData, setGeoData] = useState<FeatureCollection | null>(null);
@@ -193,8 +195,7 @@ const WorldMap: React.FC = () => {
       }
   }, [simulationIndex, allEarthquakes]); // Dependencies: rerun if slider index or data changes
 
-  // Effect 4: Sets up D3 projection, color scale, and draws static map elements (background, land)
-  // This effect runs when GeoData is loaded or if the container size potentially changes (though resize handling isn't fully implemented here)
+  // Effect 4: Sets up D3 projection, color scale, radius scale, and static map elements
   useEffect(() => {
     if (!svgRef.current || !containerRef.current || !geoData) return;
 
@@ -215,6 +216,12 @@ const WorldMap: React.FC = () => {
     const maxDepth = 700; // Assumed maximum depth from typical earthquake data
     depthColorScaleRef.current = d3.scaleSequential(d3.interpolateRgb("red", "blue"))
       .domain([minDepth, maxDepth]); // Map depth range to color gradient
+
+    // Initialize or update D3 power scale for magnitude -> radius
+    magnitudeRadiusScaleRef.current = d3.scalePow()
+        .exponent(2) // Make radius grow quadratically with magnitude
+        .domain([0, 10]) // Input magnitude range (Richter scale)
+        .range([0, 20]); // Output radius range in pixels (adjust max radius as needed)
 
     // Draw static map background (ocean color)
     // Use join pattern to add rect if it doesn't exist, or update dimensions if it does
@@ -257,13 +264,14 @@ const WorldMap: React.FC = () => {
   // Effect 5: Renders and animates earthquake circles based on the current simulation index and filters
   useEffect(() => {
     // Ensure all required elements and data are available
-    if (!svgRef.current || !projectionRef.current || !depthColorScaleRef.current || allEarthquakes.length === 0) {
-      return;
+    if (!svgRef.current || !projectionRef.current || !depthColorScaleRef.current || !magnitudeRadiusScaleRef.current || allEarthquakes.length === 0) {
+      return; // Add check for magnitudeRadiusScaleRef
     }
 
     const svg = d3.select(svgRef.current);
     const projection = projectionRef.current;
     const depthColorScale = depthColorScaleRef.current;
+    const magnitudeRadiusScale = magnitudeRadiusScaleRef.current; // Get the scale
 
     // 1. Determine the subset of earthquakes to display based on the simulation index
     const activeEarthquakes = allEarthquakes.slice(0, simulationIndex);
@@ -325,7 +333,7 @@ const WorldMap: React.FC = () => {
               gsap.fromTo(this, // Target the current circle element
                   { attr: { r: 0 }, autoAlpha: 0 }, // Initial state: invisible, zero radius
                   {
-                      attr: { r: d.magnitude * 1.5 }, // Final state: radius based on magnitude
+                      attr: { r: magnitudeRadiusScale(d.magnitude) }, // Use scale here
                       autoAlpha: 0.7, // Final state: semi-transparent
                       duration: ANIMATION_DURATION_S,
                       ease: 'power1.out' // Easing function for smooth appearance
@@ -338,7 +346,7 @@ const WorldMap: React.FC = () => {
           .call(update => update.transition(`update-${Date.now()}`).duration(ANIMATION_DURATION_S / 2)
             .attr('cx', d => projection([d.longitude, d.latitude])?.[0] ?? 0)
             .attr('cy', d => projection([d.longitude, d.latitude])?.[1] ?? 0)
-            .attr('r', d => d.magnitude * 1.5) // Update radius if magnitude changes (unlikely here)
+            .attr('r', d => magnitudeRadiusScale(d.magnitude)) // Use scale here
             .attr('fill', d => depthColorScale(d.depth)) // Update color if depth scale changes
             .style('opacity', 0.7) // Ensure opacity remains consistent
           ),
