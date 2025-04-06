@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { FeatureCollection } from 'geojson';
-import { formatDistanceToNow } from 'date-fns'; // Import date-fns function
+import { formatDistanceToNow, format } from 'date-fns'; // Import date-fns functions
 import { gsap } from 'gsap'; // Import GSAP
 
 // Define an interface for our earthquake data
@@ -27,6 +27,8 @@ interface TooltipState {
 // Simulation speed (milliseconds between adding earthquakes)
 const SIMULATION_INTERVAL_MS = 100; // Add new earthquake every 100ms
 const ANIMATION_DURATION_S = 0.5; // Animation duration in seconds
+// Date format for display
+const DATE_DISPLAY_FORMAT = 'yyyy-MM-dd HH:mm';
 
 const WorldMap: React.FC = () => {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -42,6 +44,9 @@ const WorldMap: React.FC = () => {
   // --- Filter State ---
   const [minMagnitudeFilter, setMinMagnitudeFilter] = useState<number>(0);
   const [showOnlyShallow, setShowOnlyShallow] = useState<boolean>(false); // Shallow = depth < 50km
+  // --- Simulation Control State ---
+  const [isSimulationRunning, setIsSimulationRunning] = useState<boolean>(true); // Start running by default
+  const [currentSimulationTime, setCurrentSimulationTime] = useState<string>(''); // Display current sim time
 
   // Effect 1: Fetch static data (GeoJSON, Earthquake CSV)
   useEffect(() => {
@@ -100,7 +105,17 @@ const WorldMap: React.FC = () => {
       // Sort data by timestamp ascending for simulation
       const sortedData = parsedData.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
       setAllEarthquakes(sortedData);
-      setSimulationIndex(0); // Reset simulation index when new data is loaded
+      setSimulationIndex(0); // Reset simulation index
+      setIsSimulationRunning(true); // Start running automatically
+      if (sortedData.length > 0) {
+        try {
+            setCurrentSimulationTime(format(new Date(sortedData[0].timestamp), DATE_DISPLAY_FORMAT));
+        } catch {
+            setCurrentSimulationTime('Invalid Date');
+        }
+      } else {
+          setCurrentSimulationTime('');
+      }
     }).catch(err => console.error('Error loading or parsing earthquake CSV:', err));
 
   }, []); // Run only once on component mount
@@ -109,21 +124,63 @@ const WorldMap: React.FC = () => {
   useEffect(() => {
     if (allEarthquakes.length === 0) return; // Don't start if no data
 
-    const intervalId = setInterval(() => {
-      setSimulationIndex(prevIndex => {
-        if (prevIndex < allEarthquakes.length) {
-          return prevIndex + 1;
+    let intervalId: NodeJS.Timeout | null = null;
+
+    if (isSimulationRunning) {
+        intervalId = setInterval(() => {
+            setSimulationIndex(prevIndex => {
+                const nextIndex = prevIndex + 1;
+                if (nextIndex < allEarthquakes.length) {
+                    // Update time display based on the *next* earthquake in the sequence
+                    try {
+                        setCurrentSimulationTime(format(new Date(allEarthquakes[nextIndex].timestamp), DATE_DISPLAY_FORMAT));
+                    } catch {
+                        setCurrentSimulationTime('Invalid Date');
+                    }
+                    return nextIndex;
+                } else {
+                    // Reached the end
+                    setIsSimulationRunning(false); // Stop the simulation
+                    if (intervalId) clearInterval(intervalId);
+                    // Update time to the last earthquake
+                    if (allEarthquakes.length > 0) {
+                         try {
+                            setCurrentSimulationTime(format(new Date(allEarthquakes[allEarthquakes.length - 1].timestamp), DATE_DISPLAY_FORMAT));
+                         } catch {
+                            setCurrentSimulationTime('Invalid Date');
+                         }
+                    }
+                    return prevIndex; // Keep index at the last item
+                }
+            });
+        }, SIMULATION_INTERVAL_MS);
+    }
+
+    // Cleanup function
+    return () => {
+        if (intervalId) clearInterval(intervalId);
+    };
+  }, [allEarthquakes, isSimulationRunning]); // Rerun if data changes or simulation state changes
+
+  // Effect 3: Update time display when slider changes index manually
+  useEffect(() => {
+      if (allEarthquakes.length > 0 && simulationIndex >= 0 && simulationIndex < allEarthquakes.length) {
+        try {
+            setCurrentSimulationTime(format(new Date(allEarthquakes[simulationIndex].timestamp), DATE_DISPLAY_FORMAT));
+        } catch {
+            setCurrentSimulationTime('Invalid Date')
         }
-        clearInterval(intervalId); // Stop interval when all data is processed
-        return prevIndex;
-      });
-    }, SIMULATION_INTERVAL_MS);
+      } else if (allEarthquakes.length > 0 && simulationIndex >= allEarthquakes.length) {
+          // Handle case where slider is dragged to the end (or beyond)
+           try {
+                setCurrentSimulationTime(format(new Date(allEarthquakes[allEarthquakes.length - 1].timestamp), DATE_DISPLAY_FORMAT));
+            } catch {
+                setCurrentSimulationTime('Invalid Date')
+            }
+      }
+  }, [simulationIndex, allEarthquakes]); // Update time when index or data changes
 
-    // Cleanup function to clear interval on unmount or data change
-    return () => clearInterval(intervalId);
-  }, [allEarthquakes]); // Rerun if earthquake data changes
-
-  // Effect 3: Setup D3 projection, color scale, and static map elements
+  // Effect 4: Setup D3 projection, color scale, and static map elements
   useEffect(() => {
     if (!svgRef.current || !containerRef.current || !geoData) return;
 
@@ -180,7 +237,7 @@ const WorldMap: React.FC = () => {
 
   }, [geoData]); // Rerun only if GeoData changes
 
-  // Effect 4: Update and animate earthquake circles based on simulation and filters
+  // Effect 5: Update and animate earthquake circles based on simulation and filters
   useEffect(() => {
     if (!svgRef.current || !projectionRef.current || !depthColorScaleRef.current || allEarthquakes.length === 0) {
       return; // Need SVG, projection, color scale, and data
@@ -282,8 +339,45 @@ const WorldMap: React.FC = () => {
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-100 overflow-hidden"> {/* Added overflow-hidden */}
       {/* Filter Controls Panel */}
-      <div className="absolute top-4 left-4 bg-white bg-opacity-80 p-4 rounded shadow-md z-10 space-y-3">
-         <h3 className="text-sm font-semibold text-gray-700 mb-2">Filters</h3>
+      <div className="absolute top-4 left-4 bg-white bg-opacity-80 p-4 rounded shadow-md z-10 space-y-3 w-64"> {/* Increased width */}
+         <h3 className="text-sm font-semibold text-gray-700 mb-2">Filters & Simulation</h3>
+
+         {/* --- Simulation Controls --- */}
+         <div className="border-t pt-3 mt-3 space-y-3">
+            <div className="flex items-center justify-between">
+                 <button
+                    onClick={() => setIsSimulationRunning(!isSimulationRunning)}
+                    disabled={allEarthquakes.length === 0 || simulationIndex >= allEarthquakes.length}
+                    className={`px-3 py-1 text-xs font-medium rounded ${
+                      isSimulationRunning
+                        ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                        : 'bg-green-500 hover:bg-green-600 text-white'
+                    } disabled:bg-gray-400 disabled:cursor-not-allowed`}
+                 >
+                    {isSimulationRunning ? 'Pause' : (simulationIndex >= allEarthquakes.length ? 'Finished' : 'Play')}
+                 </button>
+                 <span className="text-xs text-gray-600 whitespace-nowrap ml-2">
+                    {currentSimulationTime || 'Loading data...'}
+                 </span>
+            </div>
+             <div>
+                <label htmlFor="simulationProgress" className="sr-only">Simulation Progress</label>
+                <input
+                    type="range"
+                    id="simulationProgress"
+                    min="0"
+                    max={allEarthquakes.length > 0 ? allEarthquakes.length -1 : 0} // Max index
+                    value={simulationIndex}
+                    onChange={(e) => setSimulationIndex(parseInt(e.target.value))}
+                    disabled={allEarthquakes.length === 0}
+                    className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 disabled:bg-gray-300"
+                    title={`Earthquake ${simulationIndex + 1} of ${allEarthquakes.length}`}
+                />
+             </div>
+         </div>
+
+
+         {/* --- Filtering Controls --- */}
         {/* Magnitude Slider */}
         <div>
           <label htmlFor="magnitude" className="block text-xs font-medium text-gray-600">
