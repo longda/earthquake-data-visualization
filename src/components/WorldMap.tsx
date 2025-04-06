@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { FeatureCollection } from 'geojson';
+import { formatDistanceToNow } from 'date-fns'; // Import date-fns function
 
 // Define an interface for our earthquake data
 interface EarthquakeData {
@@ -10,14 +11,24 @@ interface EarthquakeData {
   longitude: number;
   magnitude: number;
   depth: number;
-  // Add other fields if needed later
+  timestamp: string; // Added timestamp
+  // Removed place as it's not directly available in the CSV
+}
+
+// Define an interface for the tooltip state
+interface TooltipState {
+  visible: boolean;
+  content: string;
+  x: number;
+  y: number;
 }
 
 const WorldMap: React.FC = () => {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [geoData, setGeoData] = useState<FeatureCollection | null>(null);
-  const [earthquakeData, setEarthquakeData] = useState<EarthquakeData[]>([]); // State for earthquake data
+  const [earthquakeData, setEarthquakeData] = useState<EarthquakeData[]>([]);
+  const [tooltip, setTooltip] = useState<TooltipState>({ visible: false, content: '', x: 0, y: 0 }); // State for tooltip
 
   useEffect(() => {
     // Fetch GeoJSON data for world map outlines
@@ -32,95 +43,148 @@ const WorldMap: React.FC = () => {
     // Fetch Earthquake CSV data
     d3.csv('/database.csv').then(data => {
       const parsedData: EarthquakeData[] = data.reduce((acc: EarthquakeData[], d) => {
-        // Convert string values to numbers, handle potential errors/missing data
         const latitude = parseFloat(d.Latitude ?? '');
         const longitude = parseFloat(d.Longitude ?? '');
         const magnitude = parseFloat(d.Magnitude ?? '');
         const depth = parseFloat(d.Depth ?? '');
+        const dateStr = d.Date ?? ''; // MM/DD/YYYY
+        const timeStr = d.Time ?? ''; // HH:mm:ss
 
-        // Only include valid entries
-        if (!isNaN(latitude) && !isNaN(longitude) && !isNaN(magnitude) && !isNaN(depth)) {
-          acc.push({ latitude, longitude, magnitude, depth });
+        let timestamp = '';
+        if (dateStr && timeStr) {
+          // Parse MM/DD/YYYY
+          const dateParts = dateStr.split('/');
+          if (dateParts.length === 3) {
+            const month = dateParts[0].padStart(2, '0');
+            const day = dateParts[1].padStart(2, '0');
+            const year = dateParts[2];
+            // Construct ISO-like format YYYY-MM-DDTHH:mm:ssZ
+            timestamp = `${year}-${month}-${day}T${timeStr}Z`;
+          } else {
+            console.warn('Skipping row with unexpected date format:', dateStr);
+          }
+        }
+
+        if (!isNaN(latitude) && !isNaN(longitude) && !isNaN(magnitude) && !isNaN(depth) && timestamp) {
+          try {
+            new Date(timestamp).toISOString(); // Check if the reconstructed timestamp parses
+            acc.push({ latitude, longitude, magnitude, depth, timestamp });
+          } catch (e) {
+             console.warn('Skipping row with invalid reconstructed timestamp:', timestamp, e);
+          }
         } else {
-          // console.warn('Skipping row with invalid data:', d); // Optional: Log skipped rows
+          // Silently skip rows with missing/invalid numeric data or date/time
         }
         return acc;
       }, []);
+      // Removed console.log for parsed data
       setEarthquakeData(parsedData);
     }).catch(err => console.error('Error loading or parsing earthquake CSV:', err));
 
   }, []); // Run only once on component mount
 
   useEffect(() => {
-    if (!geoData || !earthquakeData.length || !svgRef.current || !containerRef.current) return; // Wait for both datasets
+    // Add guard clause for refs and data
+    if (!geoData || !earthquakeData.length || !svgRef.current || !containerRef.current) {
+        // Removed console.log for prerequisites
+        return;
+    }
 
     const svg = d3.select(svgRef.current);
     const { width, height } = containerRef.current.getBoundingClientRect();
+    // Removed console.log for dimensions
+
+    // Add guard clause for valid dimensions
+    if (width <= 0 || height <= 0) {
+      // console.warn('Container dimensions not ready or invalid:', { width, height }); // Keep this warning potentially
+      return; // Don't draw if dimensions are not valid
+    }
 
     // Clear previous render
     svg.selectAll('*').remove();
 
-    // Define projection - using Mercator as suggested in PRD
-    // Adjust scale and translate to fit the container
     const projection = d3.geoMercator()
-      .scale(width / (2 * Math.PI)) // Scale based on width
-      .translate([width / 2, height / 1.5]); // Center the map slightly lower
+      .scale(width / (2 * Math.PI))
+      .translate([width / 2, height / 1.5]);
 
-    // Define path generator
+    // Removed console.log for projection
+
     const pathGenerator = d3.geoPath().projection(projection);
 
-    // Draw the ocean background
     svg.append('rect')
        .attr('width', width)
        .attr('height', height)
-       .attr('fill', '#a0c4ff'); // Light blue for ocean
+       .attr('fill', '#a0c4ff');
 
-    // Draw the map features (countries)
     svg.append('g')
       .selectAll('path')
       .data(geoData.features)
       .enter()
       .append('path')
       .attr('d', pathGenerator)
-      .attr('fill', '#cccccc') // Light gray for landmasses
-      .attr('stroke', '#ffffff') // White borders
+      .attr('fill', '#cccccc')
+      .attr('stroke', '#ffffff')
       .attr('stroke-width', 0.5);
 
-    // --- Plot Earthquakes ---
+    const minDepth = 0;
+    const maxDepth = 700;
 
-    // Determine depth range for color scale
-    // Using a fixed range based on typical data, adjust if needed
-    const minDepth = 0; // d3.min(earthquakeData, d => d.depth) ?? 0;
-    const maxDepth = 700; // Approx max depth; d3.max(earthquakeData, d => d.depth) ?? 700;
-
-    // Color scale: Red (shallow) to Blue (deep)
     const depthColorScale = d3.scaleSequential(d3.interpolateRgb("red", "blue"))
       .domain([minDepth, maxDepth]);
 
-    // Select all circles, bind data, and handle enter selection
+    // --- Plot Earthquakes with Tooltips ---
     svg.append('g')
-       .attr('class', 'earthquakes') // Group for earthquakes
+       .attr('class', 'earthquakes')
        .selectAll('circle')
        .data(earthquakeData)
        .enter()
        .append('circle')
-       .attr('cx', d => projection([d.longitude, d.latitude])?.[0] ?? 0) // Use projection for coordinates
+       .attr('cx', d => projection([d.longitude, d.latitude])?.[0] ?? 0)
        .attr('cy', d => projection([d.longitude, d.latitude])?.[1] ?? 0)
-       .attr('r', d => d.magnitude * 1.5) // Scale radius by magnitude (adjust multiplier as needed)
+       .attr('r', d => d.magnitude * 1.5)
        .attr('fill', d => depthColorScale(d.depth))
-       .attr('fill-opacity', 0.6) // Make circles slightly transparent
-       .attr('stroke', '#333') // Add a subtle border
-       .attr('stroke-width', 0.5);
-
+       .attr('fill-opacity', 0.7) // Slightly increased opacity
+       .attr('stroke', '#333')
+       .attr('stroke-width', 0.5)
+       .style('cursor', 'pointer') // Add pointer cursor on hover
+       .on('mouseover', (event, d: EarthquakeData) => {
+         try { // Keep try-catch for safety
+           const [x, y] = d3.pointer(event, svg.node());
+           const formattedTime = formatDistanceToNow(new Date(d.timestamp), { addSuffix: true });
+           const content = `
+             Magnitude: ${d.magnitude.toFixed(1)}<br/>
+             Depth: ${d.depth.toFixed(0)} km<br/>
+             Time: ${formattedTime}
+           `;
+           setTooltip({ visible: true, content, x: x + 10, y: y + 10 });
+         } catch (e) {
+           console.error('Error formatting date for tooltip:', d.timestamp, e);
+           const [x, y] = d3.pointer(event, svg.node());
+           setTooltip({ visible: true, content: 'Error displaying data', x: x + 10, y: y + 10 });
+         }
+       })
+       .on('mousemove', (event) => {
+         const [x, y] = d3.pointer(event, svg.node());
+         setTooltip(prev => ({ ...prev, x: x + 10, y: y + 10 }));
+       })
+       .on('mouseout', () => {
+         setTooltip({ visible: false, content: '', x: 0, y: 0 });
+       });
     // --- End Plot Earthquakes ---
 
-  }, [geoData, earthquakeData]); // Redraw when geoData or earthquakeData changes
-
-  // Note: Proper resize handling would ideally use ResizeObserver
+  }, [geoData, earthquakeData]);
 
   return (
-    <div ref={containerRef} className="w-full h-full">
+    <div ref={containerRef} className="relative w-full h-full">
       <svg ref={svgRef} width="100%" height="100%"></svg>
+      {/* Tooltip Element */}
+      {tooltip.visible && (
+        <div
+          className="absolute bg-gray-800 text-white text-xs rounded p-2 pointer-events-none shadow-lg"
+          style={{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }}
+          dangerouslySetInnerHTML={{ __html: tooltip.content }}
+        />
+      )}
     </div>
   );
 };
