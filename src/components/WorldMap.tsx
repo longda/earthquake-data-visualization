@@ -369,7 +369,10 @@ const WorldMap: React.FC = () => {
     <div ref={containerRef} className="relative w-full h-full bg-gray-100 overflow-hidden">
       {/* Filter & Simulation Controls Panel */}
       <div className="absolute top-4 left-4 bg-white bg-opacity-80 p-4 rounded shadow-md z-10 space-y-3 w-64">
-         <h3 className="text-sm font-semibold text-gray-700 mb-2">Filters & Simulation</h3>
+         <p className="text-xs text-gray-600 mb-2">
+           An interactive map simulating global earthquake occurrences over time.
+         </p>
+         <h3 className="text-sm font-semibold text-gray-700">Filters & Simulation</h3>
 
          {/* Simulation Controls Section */}
          <div className="border-t pt-3 mt-3 space-y-3">
