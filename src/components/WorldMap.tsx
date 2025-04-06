@@ -292,14 +292,17 @@ const WorldMap: React.FC = () => {
       .join(
         // --- ENTER selection --- (for new data points)
         enter => enter.append('circle')
-          // Set initial attributes (position, color, etc.)
-          .attr('cx', d => projection([d.longitude, d.latitude])?.[0] ?? 0) // Use projection to get screen coords
+          // Set static attributes
+          .attr('cx', d => projection([d.longitude, d.latitude])?.[0] ?? 0)
           .attr('cy', d => projection([d.longitude, d.latitude])?.[1] ?? 0)
-          .attr('fill', d => depthColorScale(d.depth)) // Use color scale for depth
+          .attr('fill', d => depthColorScale(d.depth))
           .attr('stroke', '#333')
           .attr('stroke-width', 0.5)
-          .style('cursor', 'pointer') // Indicate interactivity
-          // --- Tooltip event handlers ---
+          .style('cursor', 'pointer')
+          // Set initial state for transition
+          .attr('r', 0)
+          .attr('opacity', 0)
+          // Add Tooltip handlers
           .on('mouseover', (event, d) => {
              // Show tooltip on hover
              try {
@@ -327,28 +330,30 @@ const WorldMap: React.FC = () => {
              // Hide tooltip when mouse leaves the circle
              setTooltip({ visible: false, content: '', x: 0, y: 0 });
           })
-          // --- GSAP Enter Animation ---
-          .each(function(d) { // Use 'function' to preserve 'this' context
-              // Animate from radius 0, opacity 0 to final size and opacity
-              gsap.fromTo(this, // Target the current circle element
-                  { attr: { r: 0 }, autoAlpha: 0 }, // Initial state: invisible, zero radius
-                  {
-                      attr: { r: magnitudeRadiusScale(d.magnitude) }, // Use scale here
-                      autoAlpha: 0.7, // Final state: semi-transparent
-                      duration: ANIMATION_DURATION_S,
-                      ease: 'power1.out' // Easing function for smooth appearance
-                  }
-              );
-          }),
+          // Apply D3 transition for enter animation
+          .call(enter => enter.transition()
+            .duration(ANIMATION_DURATION_S * 1000) // Convert seconds to ms for D3
+            .attr('r', d => {
+                const scale = magnitudeRadiusScaleRef.current; // Get scale from ref
+                const targetRadius = scale && !isNaN(d.magnitude) ? scale(d.magnitude) : 1; // Default to 1px
+                return !isNaN(targetRadius) ? targetRadius : 1; // Ensure not NaN
+            })
+            .attr('opacity', 0.7)
+          ),
         // --- UPDATE selection --- (for existing data points that remain after filtering)
         update => update
-          // Optionally, add a transition for attribute changes if filters might affect existing points
-          .call(update => update.transition(`update-${Date.now()}`).duration(ANIMATION_DURATION_S / 2)
+          // Apply D3 transition for smoothness if filters change attributes
+          .call(update => update.transition(`update-${Date.now()}`)
+            .duration(ANIMATION_DURATION_S * 500) // Shorter update transition (ms)
             .attr('cx', d => projection([d.longitude, d.latitude])?.[0] ?? 0)
             .attr('cy', d => projection([d.longitude, d.latitude])?.[1] ?? 0)
-            .attr('r', d => magnitudeRadiusScale(d.magnitude)) // Use scale here
-            .attr('fill', d => depthColorScale(d.depth)) // Update color if depth scale changes
-            .style('opacity', 0.7) // Ensure opacity remains consistent
+            .attr('r', d => { // Restore dynamic radius calculation
+                const scale = magnitudeRadiusScaleRef.current;
+                const targetRadius = scale && !isNaN(d.magnitude) ? scale(d.magnitude) : 1;
+                return !isNaN(targetRadius) ? targetRadius : 1;
+            })
+            .attr('fill', d => depthColorScale(d.depth))
+            .style('opacity', 0.7)
           ),
         // --- EXIT selection --- (for data points removed by filtering or simulation progress)
         exit => exit
