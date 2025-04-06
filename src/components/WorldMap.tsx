@@ -29,6 +29,9 @@ const WorldMap: React.FC = () => {
   const [geoData, setGeoData] = useState<FeatureCollection | null>(null);
   const [earthquakeData, setEarthquakeData] = useState<EarthquakeData[]>([]);
   const [tooltip, setTooltip] = useState<TooltipState>({ visible: false, content: '', x: 0, y: 0 }); // State for tooltip
+  // --- Filter State ---
+  const [minMagnitudeFilter, setMinMagnitudeFilter] = useState<number>(0);
+  const [showOnlyShallow, setShowOnlyShallow] = useState<boolean>(false); // Shallow = depth < 50km
 
   useEffect(() => {
     // Fetch GeoJSON data for world map outlines
@@ -84,8 +87,16 @@ const WorldMap: React.FC = () => {
   }, []); // Run only once on component mount
 
   useEffect(() => {
+    // Apply filters
+    const filteredEarthquakes = earthquakeData.filter(d => {
+      const magnitudePass = d.magnitude >= minMagnitudeFilter;
+      const depthPass = !showOnlyShallow || (showOnlyShallow && d.depth < 50);
+      // Placeholder for region filter logic if/when implemented
+      return magnitudePass && depthPass;
+    });
+
     // Add guard clause for refs and data
-    if (!geoData || !earthquakeData.length || !svgRef.current || !containerRef.current) {
+    if (!geoData || !filteredEarthquakes || !svgRef.current || !containerRef.current) { // Use filteredEarthquakes here for check
         // Removed console.log for prerequisites
         return;
     }
@@ -136,7 +147,7 @@ const WorldMap: React.FC = () => {
     svg.append('g')
        .attr('class', 'earthquakes')
        .selectAll('circle')
-       .data(earthquakeData)
+       .data(filteredEarthquakes) // Use filtered data
        .enter()
        .append('circle')
        .attr('cx', d => projection([d.longitude, d.latitude])?.[0] ?? 0)
@@ -172,10 +183,45 @@ const WorldMap: React.FC = () => {
        });
     // --- End Plot Earthquakes ---
 
-  }, [geoData, earthquakeData]);
+  }, [geoData, earthquakeData, minMagnitudeFilter, showOnlyShallow]); // Add filter states to dependencies
 
   return (
-    <div ref={containerRef} className="relative w-full h-full">
+    <div ref={containerRef} className="relative w-full h-full bg-gray-100"> {/* Added bg color for contrast */}
+      {/* Filter Controls Panel */}
+      <div className="absolute top-4 left-4 bg-white bg-opacity-80 p-4 rounded shadow-md z-10 space-y-3">
+         <h3 className="text-sm font-semibold text-gray-700 mb-2">Filters</h3>
+        {/* Magnitude Slider */}
+        <div>
+          <label htmlFor="magnitude" className="block text-xs font-medium text-gray-600">
+            Min Magnitude: {minMagnitudeFilter.toFixed(1)}
+          </label>
+          <input
+            type="range"
+            id="magnitude"
+            min="0"
+            max="10" // PRD specified 0-10
+            step="0.1"
+            value={minMagnitudeFilter}
+            onChange={(e) => setMinMagnitudeFilter(parseFloat(e.target.value))}
+            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+          />
+        </div>
+
+        {/* Depth Toggle */}
+        <div className="flex items-center">
+          <input
+            type="checkbox"
+            id="depthToggle"
+            checked={showOnlyShallow}
+            onChange={(e) => setShowOnlyShallow(e.target.checked)}
+            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+          />
+          <label htmlFor="depthToggle" className="ml-2 text-xs font-medium text-gray-600">
+            Show Only Shallow (&lt;50km)
+          </label>
+        </div>
+      </div>
+
       <svg ref={svgRef} width="100%" height="100%"></svg>
       {/* Tooltip Element */}
       {tooltip.visible && (
