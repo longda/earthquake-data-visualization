@@ -358,7 +358,8 @@ const WorldMap: React.FC = () => {
         exit => exit
           // --- GSAP Exit Animation ---
           .each(function() { // Use 'function' to preserve 'this' context
-              const circleElement = this; // Capture 'this' for use in callback
+              // eslint-disable-next-line @typescript-eslint/no-this-alias
+              const circleElement = this; // Capture 'this' for use in GSAP onComplete arrow fn
               // Animate to radius 0, opacity 0
               gsap.to(circleElement, { // Target the circle being removed
                   attr: { r: 0 }, // Final state: zero radius
