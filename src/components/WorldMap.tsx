@@ -271,7 +271,6 @@ const WorldMap: React.FC = () => {
     const svg = d3.select(svgRef.current);
     const projection = projectionRef.current;
     const depthColorScale = depthColorScaleRef.current;
-    const magnitudeRadiusScale = magnitudeRadiusScaleRef.current; // Get the scale
 
     // 1. Determine the subset of earthquakes to display based on the simulation index
     const activeEarthquakes = allEarthquakes.slice(0, simulationIndex);
