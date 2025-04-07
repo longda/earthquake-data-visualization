@@ -39,7 +39,7 @@ This project is a web application that visualizes global earthquake data on an i
 
 1.  **Clone the repository:**
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/longda/earthquake-data-visualization.git
     cd earthquake-data-visualization
     ```
 
